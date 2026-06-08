@@ -1,0 +1,114 @@
+% =========================================================
+% pid_azimuth.m
+% PID Controller Design — Azimuth Axis
+%
+% Designs and validates a PID controller for the east-west
+% azimuth axis of the solar tracker.
+% Motor plant model is identified from the BLDC + worm gear.
+%
+% Outputs a tuned PID object and step-response validation plots.
+% =========================================================
+
+function [C_az, info] = pid_azimuth(cfg)
+
+    if nargin < 1
+        cfg = site_config();
+    end
+
+    fprintf('=== Azimuth Axis PID Design ===\n');
+
+    %% --- Plant Model: BLDC Motor + Worm Gear ---
+    % Motor electrical: L*s + R  →  transfer function from V to current
+    % Motor mechanical: J*s + B  →  transfer function from torque to velocity
+    % Position: integrate velocity
+    %
+    % Simplified transfer function (velocity/voltage):
+    %   G_motor(s) = Kv / ((L*s + R)(J*s + B) + Kv*Ke)
+    % With worm gear: output shaft velocity = omega_motor / gear_ratio
+    % Position: G_pos(s) = G_motor(s) / (gear_ratio * s)
+
+    Kv   = cfg.motor.Kv * (2*pi/60);    % rad/s per V (convert from RPM/V)
+    Ke   = Kv;                           % back-EMF constant = Kv (SI)
+    R    = cfg.motor.R_phase;
+    L    = cfg.motor.L_phase;
+    J    = cfg.motor.J;
+    B    = cfg.motor.B;
+    Gr   = cfg.gear.ratio;
+    eta  = cfg.gear.efficiency;
+
+    % Motor transfer function V → angular position (rad)
+    % G(s) = Kv * eta / (s * (L*s + R) * (J*s + B) + Kv*Ke*s)
+    num_G  = Kv * eta;
+    den_G  = conv([L R], [J B]) ;
+    % Add back-EMF coupling: multiply denominator properly
+    % Full: [(LJ)s^3 + (LB+RJ)s^2 + (RB + KvKe)s] -> position: /s -> /s^2
+    %
+    % Approximate 2nd-order model (dominant poles, L negligible vs R*tau):
+    tau_el = L / R;    % electrical time constant (~1ms, fast)
+    tau_me = J / B;    % mechanical time constant
+    Kdc    = Kv * eta / (R * B * Gr);   % DC gain of position loop
+
+    % Reduced 2nd order: G_pos(s) = Kdc / (s * (tau_me*s + 1))
+    G_pos = tf(Kdc, [tau_me 1 0]);
+
+    fprintf('Plant DC gain (position): %.4f deg/V (after gear)\n', Kdc * Gr * (180/pi));
+    fprintf('Mechanical time constant: %.4f s\n', tau_me);
+
+    %% --- PID Auto-Tuning ---
+    % Target: phase margin >= 45 deg, gain margin >= 6 dB
+    % Max overshoot < 10%, settling time < 5 s
+
+    opts = pidtuneOptions('PhaseMargin', 50, 'DesignFocus', 'reference-tracking');
+    [C_az_auto, ~] = pidtune(G_pos, 'PID', 1/cfg.ctrl.sample_time, opts);
+
+    fprintf('Auto-tuned PID gains:\n');
+    fprintf('  Kp = %.4f\n  Ki = %.4f\n  Kd = %.4f\n', ...
+        C_az_auto.Kp, C_az_auto.Ki, C_az_auto.Kd);
+
+    %% --- Manual Gains from Config (override if specified) ---
+    C_az = pid(cfg.pid.Kp_az, cfg.pid.Ki_az, cfg.pid.Kd_az, ...
+               cfg.ctrl.sample_time / 10, ...       % filter coefficient N=10
+               cfg.ctrl.sample_time);               % sample time
+
+    fprintf('\nConfig-specified PID gains:\n');
+    fprintf('  Kp = %.4f\n  Ki = %.4f\n  Kd = %.4f\n', ...
+        cfg.pid.Kp_az, cfg.pid.Ki_az, cfg.pid.Kd_az);
+
+    %% --- Closed-Loop Analysis ---
+    T_cl  = feedback(C_az * G_pos, 1);
+    info  = stepinfo(T_cl);
+
+    fprintf('\nStep Response Performance:\n');
+    fprintf('  Rise time      : %.3f s\n', info.RiseTime);
+    fprintf('  Settling time  : %.3f s\n', info.SettlingTime);
+    fprintf('  Overshoot      : %.2f %%\n', info.Overshoot);
+    [Gm, Pm, ~, ~] = margin(C_az * G_pos);
+    fprintf('  Gain margin    : %.2f dB\n', 20*log10(Gm));
+    fprintf('  Phase margin   : %.2f deg\n', Pm);
+
+    %% --- Performance Check ---
+    assert(info.Overshoot < 15, 'FAIL: Overshoot exceeds 15%%');
+    assert(info.SettlingTime < 10, 'FAIL: Settling time exceeds 10 s');
+    assert(Pm > 30, 'FAIL: Phase margin below 30 deg');
+    fprintf('\nAll performance checks PASSED.\n');
+
+    %% --- Plot (standalone mode) ---
+    if ~nargout
+        figure('Name', 'Azimuth PID Step Response', 'Color', 'white');
+
+        subplot(2,2,1);
+        step(T_cl, 20); title('Step Response'); grid on;
+
+        subplot(2,2,2);
+        bode(C_az * G_pos); title('Open-Loop Bode'); grid on;
+
+        subplot(2,2,3);
+        rlocus(C_az * G_pos); title('Root Locus'); grid on;
+
+        subplot(2,2,4);
+        impulse(T_cl, 20); title('Impulse Response'); grid on;
+
+        sgtitle('Azimuth Axis PID — Closed-Loop Analysis');
+    end
+
+end
