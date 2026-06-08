@@ -1,0 +1,148 @@
+
+% solar_position_spa.m
+% NREL Solar Position Algorithm (SPA) — simplified implementation
+% Computes solar azimuth and elevation for given location and time.
+%
+% Reference:
+%   Reda, I. & Andreas, A. (2004). Solar Position Algorithm for
+%   Solar Radiation Applications. NREL/TP-560-34302.
+%
+% Usage:
+%   [az, el] = solar_position_spa(lat, lon, year, month, day, hour, ...
+%                                  minute, second, timezone)
+%
+% Inputs:
+%   lat, lon   : decimal degrees (N/E positive)
+%   year..sec  : date/time components (local time)
+%   timezone   : UTC offset in hours (e.g. 5.5 for IST)
+%
+% Outputs:
+%   az  : solar azimuth angle (0–360°, measured from North clockwise)
+%   el  : solar elevation angle (degrees above horizon)
+%   zen : solar zenith angle (degrees)
+
+function [az, el, zen] = solar_position_spa(lat, lon, year, month, day, ...
+                                             hour, minute, second, timezone)
+
+    %% --- Convert local time to Julian Day Number ---
+    ut = hour + (minute / 60) + (second / 3600) - timezone;  % UTC decimal hours
+
+    if month <= 2
+        year  = year  - 1;
+        month = month + 12;
+    end
+
+    A  = floor(year / 100);
+    B  = 2 - A + floor(A / 4);
+    JD = floor(365.25 * (year + 4716)) + floor(30.6001 * (month + 1)) ...
+         + day + ut / 24 + B - 1524.5;
+
+    %% --- Julian Centuries from J2000.0 ---
+    JC = (JD - 2451545.0) / 36525;
+
+    %% --- Geometric Mean Longitude of Sun (degrees) ---
+    L0 = mod(280.46646 + JC * (36000.76983 + JC * 0.0003032), 360);
+
+    %% --- Geometric Mean Anomaly of Sun (degrees) ---
+    M  = 357.52911 + JC * (35999.05029 - 0.0001537 * JC);
+
+    %% --- Equation of Centre ---
+    Mrad = deg2rad(M);
+    C = (1.914602 - JC * (0.004817 + 0.000014 * JC)) * sin(Mrad) ...
+      + (0.019993 - 0.000101 * JC) * sin(2 * Mrad) ...
+      + 0.000289 * sin(3 * Mrad);
+
+    %% --- Sun's True Longitude (degrees) ---
+    SunLon = L0 + C;
+
+    %% --- Sun's Apparent Longitude (corrected for aberration & nutation) ---
+    omega  = 125.04 - 1934.136 * JC;
+    lambda = SunLon - 0.00569 - 0.00478 * sin(deg2rad(omega));
+
+    %% --- Mean Obliquity of Ecliptic ---
+    epsilon0 = 23 + (26 + ((21.448 - JC * (46.8150 + JC * (0.00059 - JC * 0.001813)))) / 60) / 60;
+
+    %% --- Corrected Obliquity ---
+    epsilon = epsilon0 + 0.00256 * cos(deg2rad(omega));
+
+    %% --- Sun's Declination (degrees) ---
+    declination = rad2deg(asin(sin(deg2rad(epsilon)) * sin(deg2rad(lambda))));
+
+    %% --- Equation of Time (minutes) ---
+    y_val   = tan(deg2rad(epsilon / 2))^2;
+    L0r     = deg2rad(L0);
+    Mr      = deg2rad(M);
+    EqT     = 4 * rad2deg(y_val * sin(2 * L0r) ...
+              - 2 * 0.016708634 * sin(Mr) ...
+              + 4 * 0.016708634 * y_val * sin(Mr) * cos(2 * L0r) ...
+              - 0.5 * y_val^2 * sin(4 * L0r) ...
+              - 1.25 * 0.016708634^2 * sin(2 * Mr));
+
+    %% --- Solar Noon and Hour Angle ---
+    solar_noon    = 720 - 4 * lon - EqT + timezone * 60;  % minutes from midnight
+    solar_time    = hour * 60 + minute + second / 60 + EqT + 4 * lon - timezone * 60;
+    hour_angle    = solar_time / 4 - 180;                  % degrees
+
+    %% --- Solar Elevation (Altitude) ---
+    lat_r   = deg2rad(lat);
+    dec_r   = deg2rad(declination);
+    ha_r    = deg2rad(hour_angle);
+
+    sin_el  = sin(lat_r) * sin(dec_r) + cos(lat_r) * cos(dec_r) * cos(ha_r);
+    el_raw  = rad2deg(asin(sin_el));
+
+    %% --- Atmospheric Refraction Correction ---
+    % Applies correction for elevation > -0.575 degrees (Bennet's formula)
+    if el_raw > -0.575
+        if el_raw > 85
+            refr = 0;
+        elseif el_raw > 5
+            refr = (58.1 / tan(deg2rad(el_raw))) ...
+                 - (0.07 / tan(deg2rad(el_raw))^3) ...
+                 + (0.000086 / tan(deg2rad(el_raw))^5);
+        elseif el_raw > -0.575
+            refr = 1735 + el_raw * (-518.2 + el_raw * (103.4 + el_raw * (-12.79 + el_raw * 0.711)));
+        end
+        refr = refr / 3600;
+    else
+        refr = 0;
+    end
+
+    el  = el_raw + refr;
+    zen = 90 - el;
+
+    %% --- Solar Azimuth (degrees, 0=N clockwise) ---
+    cos_az = (sin(lat_r) * sin_el - sin(dec_r)) / (cos(lat_r) * cos(deg2rad(el)));
+    cos_az = max(-1, min(1, cos_az));   % clamp for numerical safety
+    az_raw = rad2deg(acos(cos_az));
+
+    if hour_angle > 0
+        az = mod(az_raw + 180, 360);
+    else
+        az = mod(540 - az_raw, 360);
+    end
+
+end
+
+% =========================================================
+% Standalone validation script (run this section directly)
+% =========================================================
+if ~nargout
+    cfg = site_config();
+
+    fprintf('\n--- NREL SPA Validation ---\n');
+    fprintf('Location : %.2f°N, %.2f°E (Warangal, India)\n', cfg.latitude, cfg.longitude);
+    fprintf('Date     : %d-%02d-%02d\n', cfg.year, cfg.month, cfg.day);
+    fprintf('\n  Hour  |  Azimuth  | Elevation\n');
+    fprintf('--------|-----------|----------\n');
+
+    for h = 6:18
+        [az, el, ~] = solar_position_spa(cfg.latitude, cfg.longitude, ...
+            cfg.year, cfg.month, cfg.day, h, 0, 0, cfg.timezone);
+        if el > 0
+            fprintf('  %02d:00  |  %6.2f°  |  %6.2f°\n', h, az, el);
+        else
+            fprintf('  %02d:00  |    ---    |   below horizon\n', h);
+        end
+    end
+end
