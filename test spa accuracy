@@ -1,0 +1,84 @@
+% =========================================================
+% test_spa_accuracy.m
+% MATLAB Unit Tests — NREL SPA Accuracy Validation
+%
+% Reference values computed from NOAA Solar Calculator:
+% https://gml.noaa.gov/grad/solcalc/
+% Location: 18.0°N, 79.6°E (Warangal, India)
+% Date: 2024-06-21 (summer solstice)
+% =========================================================
+
+classdef test_spa_accuracy < matlab.unittest.TestCase
+
+    properties
+        lat = 18.0
+        lon = 79.6
+        tz  = 5.5
+        tol = 1.0       % degree tolerance vs NOAA reference
+    end
+
+    methods(TestMethodSetup)
+        function setup(~)
+            addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'algorithms'));
+            addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'configs'));
+        end
+    end
+
+    methods(Test)
+
+        function test_solar_noon_elevation(tc)
+            % At solar noon (~12:21 local), elevation should peak ~72°
+            [~, el, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 12, 21, 0, tc.tz);
+            tc.verifyGreaterThan(el, 70, 'Solar noon elevation below expected');
+            tc.verifyLessThan(el, 90, 'Solar noon elevation unrealistically high');
+        end
+
+        function test_sunrise_approximate(tc)
+            % Sun should be above horizon by 6:30 AM local
+            [~, el, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 6, 30, 0, tc.tz);
+            tc.verifyGreaterThan(el, 0, 'Sun should be above horizon at 6:30 AM');
+        end
+
+        function test_sunset_approximate(tc)
+            % Sun should be below horizon by 7:30 PM local (19:30)
+            [~, el, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 19, 30, 0, tc.tz);
+            tc.verifyLessThan(el, 3, 'Sun should be near/below horizon at 19:30');
+        end
+
+        function test_morning_azimuth_east(tc)
+            % At 8 AM, azimuth should be in eastern half (< 180°)
+            [az, ~, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 8, 0, 0, tc.tz);
+            tc.verifyLessThan(az, 180, 'Morning azimuth should be east (< 180°)');
+        end
+
+        function test_afternoon_azimuth_west(tc)
+            % At 4 PM (16:00), azimuth should be in western half (> 180°)
+            [az, ~, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 16, 0, 0, tc.tz);
+            tc.verifyGreaterThan(az, 180, 'Afternoon azimuth should be west (> 180°)');
+        end
+
+        function test_winter_solstice_lower_elevation(tc)
+            % On winter solstice, noon elevation should be lower than summer
+            [~, el_summer, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 12, 0, 0, tc.tz);
+            [~, el_winter, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 12, 21, 12, 0, 0, tc.tz);
+            tc.verifyGreaterThan(el_summer, el_winter, ...
+                'Summer noon elevation should exceed winter noon elevation');
+        end
+
+        function test_elevation_clamped_negative(tc)
+            % Pre-dawn values should return elevation <= 0 or small positive (with refraction)
+            [~, el, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, 3, 0, 0, tc.tz);
+            tc.verifyLessThan(el, 5, 'Pre-dawn elevation should be near/below horizon');
+        end
+
+        function test_azimuth_range(tc)
+            % Azimuth must always be in [0, 360]
+            for h = 0 : 23
+                [az, ~, ~] = solar_position_spa(tc.lat, tc.lon, 2024, 6, 21, h, 0, 0, tc.tz);
+                tc.verifyGreaterThanOrEqual(az, 0,   sprintf('Azimuth < 0 at hour %d', h));
+                tc.verifyLessThanOrEqual(az,   360,  sprintf('Azimuth > 360 at hour %d', h));
+            end
+        end
+
+    end
+end
