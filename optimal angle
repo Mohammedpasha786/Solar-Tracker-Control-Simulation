@@ -1,0 +1,103 @@
+% optimal_angle_calc.m
+% Computes optimal azimuth, elevation, and polar (roll) angles
+% for a multi-axis solar tracker using SPA output.
+%
+% Generates a full-day setpoint time-series suitable for use
+% as a Simulink From-Workspace signal or lookup table.
+%
+% Usage:
+%   [t_vec, az_vec, el_vec, pol_vec] = optimal_angle_calc(cfg)
+%   optimal_angle_calc()   -- standalone plot mode
+
+function [t_vec, az_vec, el_vec, pol_vec] = optimal_angle_calc(cfg)
+
+    if nargin < 1
+        cfg = site_config();
+    end
+
+    %% --- Time Vector ---
+    dt_min   = 1;                          % resolution: 1 minute
+    t_start  = cfg.hour * 60;             % minutes from midnight
+    t_end    = t_start + cfg.sim_duration_hrs * 60;
+    t_vec    = (t_start : dt_min : t_end)';  % column vector (minutes)
+    N        = length(t_vec);
+
+    az_vec   = zeros(N, 1);
+    el_vec   = zeros(N, 1);
+    pol_vec  = zeros(N, 1);
+
+    %% --- Compute SPA for Each Time Step ---
+    for i = 1 : N
+        total_min = t_vec(i);
+        h   = floor(total_min / 60);
+        m   = mod(total_min, 60);
+
+        [az, el, ~] = solar_position_spa(cfg.latitude, cfg.longitude, ...
+            cfg.year, cfg.month, cfg.day, h, m, 0, cfg.timezone);
+
+        az_vec(i) = az;
+        el_vec(i) = max(0, el);    % clamp: no negative elevation commands
+
+        % Polar/Roll correction: account for Earth's axial tilt offset
+        % Simple model: polar angle tracks declination component
+        pol_vec(i) = compute_polar_angle(cfg.latitude, az, el);
+    end
+
+    %% --- Smooth setpoints (low-pass, 5-min window) to reduce motor jitter ---
+    win = round(5 / dt_min);
+    az_vec  = movmean(az_vec,  win);
+    el_vec  = movmean(el_vec,  win);
+    pol_vec = movmean(pol_vec, win);
+
+    %% --- Clamp to axis travel limits ---
+    az_vec  = max(cfg.limits.az_min,  min(cfg.limits.az_max,  az_vec));
+    el_vec  = max(cfg.limits.el_min,  min(cfg.limits.el_max,  el_vec));
+    pol_vec = max(cfg.limits.pol_min, min(cfg.limits.pol_max, pol_vec));
+
+    %% --- Convert time to seconds for Simulink ---
+    t_vec = t_vec * 60;    % minutes → seconds
+
+    %% --- Standalone Plot Mode ---
+    if ~nargout
+        t_hrs = t_vec / 3600;
+        figure('Name', 'Optimal Tracker Angles', 'Color', 'white');
+
+        subplot(3,1,1);
+        plot(t_hrs, az_vec, 'Color', [0.18 0.44 0.71], 'LineWidth', 1.5);
+        ylabel('Azimuth (°)'); title('Solar Tracker Setpoints — ' + ...
+            string(cfg.year) + '-' + string(cfg.month, '%02d') + '-' + ...
+            string(cfg.day, '%02d'));
+        grid on; xlim([t_hrs(1) t_hrs(end)]);
+
+        subplot(3,1,2);
+        plot(t_hrs, el_vec, 'Color', [0.13 0.55 0.45], 'LineWidth', 1.5);
+        ylabel('Elevation (°)'); grid on; xlim([t_hrs(1) t_hrs(end)]);
+
+        subplot(3,1,3);
+        plot(t_hrs, pol_vec, 'Color', [0.72 0.45 0.20], 'LineWidth', 1.5);
+        ylabel('Polar/Roll (°)'); xlabel('Local Time (hours)');
+        grid on; xlim([t_hrs(1) t_hrs(end)]);
+
+        sgtitle('Optimal Tracker Angles — Warangal, India');
+    end
+
+end
+
+% =========================================================
+% compute_polar_angle — polar axis correction
+% Simple model: compensates for the angle between the
+% tracker's rotation plane and the sun's diurnal arc.
+% =========================================================
+function pol = compute_polar_angle(lat, az, el)
+    lat_r = deg2rad(lat);
+    az_r  = deg2rad(az);
+    el_r  = deg2rad(el);
+
+    % Hour angle from azimuth and elevation (inverse spherical trig)
+    sin_ha = -sin(az_r) * cos(el_r) / cos(lat_r - el_r + 0.001);
+    ha     = rad2deg(asin(max(-1, min(1, sin_ha))));
+
+    % Polar angle ≈ rotation to align panel normal with sun vector
+    pol = ha * sin(lat_r);
+    pol = max(-30, min(30, pol));   % clamp to physical limits
+end
