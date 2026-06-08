@@ -1,0 +1,162 @@
+% =========================================================
+% efficiency_analysis.m
+% Compares annual energy yield:
+%   1. Fixed-tilt mount (optimal fixed angle for location)
+%   2. Single-axis azimuth tracker
+%   3. Dual-axis tracker (az + el)
+%   4. Triple-axis tracker (az + el + polar)
+%
+% Uses simplified irradiance model (clear-sky, Hottel model).
+% For production use, replace with NREL PVLIB or Simscape PV Array.
+% =========================================================
+
+function results = efficiency_analysis(cfg)
+
+    if nargin < 1; cfg = site_config(); end
+
+    fprintf('=== Solar Tracker Efficiency Analysis ===\n');
+    fprintf('Location: %.2f°N, %.2f°E\n', cfg.latitude, cfg.longitude);
+    fprintf('Panel area: %.2f m², Efficiency: %.0f%%\n\n', ...
+            cfg.panel.area, cfg.panel.efficiency * 100);
+
+    %% --- Simulate Full Year ---
+    annual_energy = struct('fixed', 0, 'single_az', 0, 'dual', 0, 'triple', 0);
+
+    for doy = 1 : 365
+        day_e = day_energy(cfg, doy);
+        annual_energy.fixed     = annual_energy.fixed     + day_e.fixed;
+        annual_energy.single_az = annual_energy.single_az + day_e.single_az;
+        annual_energy.dual      = annual_energy.dual      + day_e.dual;
+        annual_energy.triple    = annual_energy.triple    + day_e.triple;
+    end
+
+    %% --- Convert Wh → kWh ---
+    fn = fieldnames(annual_energy);
+    for i = 1:numel(fn)
+        annual_energy.(fn{i}) = annual_energy.(fn{i}) / 1000;
+    end
+
+    %% --- Print Results ---
+    base = annual_energy.fixed;
+    fprintf('%-25s %10s %12s\n', 'Configuration', 'kWh/year', 'Gain vs Fixed');
+    fprintf('%s\n', repmat('-', 1, 50));
+    fprintf('%-25s %10.1f %12s\n', 'Fixed tilt',         base,                '— baseline —');
+    fprintf('%-25s %10.1f %12.1f%%\n', 'Single-axis (Az)', annual_energy.single_az, ...
+            100*(annual_energy.single_az/base - 1));
+    fprintf('%-25s %10.1f %12.1f%%\n', 'Dual-axis (Az+El)', annual_energy.dual, ...
+            100*(annual_energy.dual/base - 1));
+    fprintf('%-25s %10.1f %12.1f%%\n', 'Triple-axis (Az+El+Pol)', annual_energy.triple, ...
+            100*(annual_energy.triple/base - 1));
+
+    results = annual_energy;
+
+    %% --- Monthly Breakdown Plot ---
+    if ~nargout
+        monthly = zeros(12, 4);
+        for mo = 1 : 12
+            d_start = sum([31 28 31 30 31 30 31 31 30 31 30 31](1:mo-1)) + 1;
+            d_end   = d_start + [31 28 31 30 31 30 31 31 30 31 30 31](mo) - 1;
+            for doy = d_start : d_end
+                de = day_energy(cfg, doy);
+                monthly(mo, 1) = monthly(mo, 1) + de.fixed     / 1000;
+                monthly(mo, 2) = monthly(mo, 2) + de.single_az / 1000;
+                monthly(mo, 3) = monthly(mo, 3) + de.dual      / 1000;
+                monthly(mo, 4) = monthly(mo, 4) + de.triple    / 1000;
+            end
+        end
+
+        figure('Name', 'Monthly Energy Yield', 'Color', 'white');
+        bar(monthly);
+        legend('Fixed Tilt', 'Single-Axis (Az)', 'Dual-Axis', 'Triple-Axis');
+        xlabel('Month'); ylabel('Energy (kWh)');
+        title('Monthly Energy Yield — Warangal, India');
+        set(gca, 'XTickLabel', {'Jan','Feb','Mar','Apr','May','Jun', ...
+                                 'Jul','Aug','Sep','Oct','Nov','Dec'});
+        grid on;
+    end
+
+end
+
+% =========================================================
+% day_energy — hourly integration for one day-of-year
+% =========================================================
+function de = day_energy(cfg, doy)
+
+    % Approximate date from day-of-year
+    [mo, dy] = doy_to_date(doy, cfg.year);
+
+    % Fixed tilt: panel tilted at latitude, facing south (az=180)
+    tilt_fixed = cfg.latitude;
+
+    de.fixed     = 0;
+    de.single_az = 0;
+    de.dual      = 0;
+    de.triple    = 0;
+    dt_hr        = 1/60;   % 1-minute steps in hours
+
+    for h_frac = 5 : dt_hr : 19
+        h  = floor(h_frac);
+        mn = round((h_frac - h) * 60);
+
+        [az, el, zen] = solar_position_spa(cfg.latitude, cfg.longitude, ...
+            cfg.year, mo, dy, h, mn, 0, cfg.timezone);
+
+        if el <= 0; continue; end
+
+        G_normal = clear_sky_irradiance(zen, doy);  % W/m^2 on normal plane
+
+        % Angle of incidence for each configuration
+        aoi_fixed  = aoi_fixed_tilt(el, az, tilt_fixed, 180);
+        aoi_single = aoi_single_axis(el, az);       % az-only tracking
+        aoi_dual   = 0;                             % perfect dual-axis: AOI=0
+        aoi_triple = max(0, aoi_polar_correction(el, az, cfg.latitude) - 0.5);
+
+        de.fixed     = de.fixed     + G_normal * cosd(aoi_fixed)  * cfg.panel.area * cfg.panel.efficiency * dt_hr;
+        de.single_az = de.single_az + G_normal * cosd(aoi_single) * cfg.panel.area * cfg.panel.efficiency * dt_hr;
+        de.dual      = de.dual      + G_normal                    * cfg.panel.area * cfg.panel.efficiency * dt_hr;
+        de.triple    = de.triple    + G_normal * cosd(aoi_triple) * cfg.panel.area * cfg.panel.efficiency * dt_hr;
+    end
+
+end
+
+function G = clear_sky_irradiance(zen_deg, doy)
+    % Hottel clear-sky model (tropical/midlatitude)
+    tau_b = 0.56;    % beam transmittance coefficient
+    G_on  = 1367 * (1 + 0.033 * cosd(360 * doy / 365));  % extraterrestrial
+    if zen_deg >= 90
+        G = 0;
+    else
+        G = G_on * tau_b^(1/cosd(zen_deg));
+        G = max(0, G);
+    end
+end
+
+function aoi = aoi_fixed_tilt(el, az, tilt, panel_az)
+    % AOI for fixed panel: tilt from horizontal, panel_az = facing direction
+    cos_aoi = cosd(el) * cosd(az - panel_az) * sind(tilt) + sind(el) * cosd(tilt);
+    aoi = rad2deg(acos(max(0, min(1, cos_aoi))));
+end
+
+function aoi = aoi_single_axis(el, az)
+    % Single-axis azimuth tracker: panel always faces sun azimuth
+    % Only elevation is uncontrolled; AOI = 90 - el
+    aoi = 90 - el;
+    aoi = max(0, aoi);
+end
+
+function aoi = aoi_polar_correction(el, az, lat)
+    % Triple-axis: small residual AOI after polar correction
+    polar_err = abs(lat - el) * 0.1;   % simplified residual
+    aoi = max(0, polar_err);
+end
+
+function [mo, dy] = doy_to_date(doy, year)
+    days_in_month = [31 28 31 30 31 30 31 31 30 31 30 31];
+    if mod(year,4)==0; days_in_month(2)=29; end
+    mo = 1;
+    while doy > days_in_month(mo) && mo < 12
+        doy = doy - days_in_month(mo);
+        mo  = mo + 1;
+    end
+    dy = doy;
+end
