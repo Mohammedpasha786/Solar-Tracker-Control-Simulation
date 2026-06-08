@@ -1,0 +1,46 @@
+name: MATLAB CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run MATLAB Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MATLAB
+        uses: matlab-actions/setup-matlab@v2
+        with:
+          release: R2024a
+          products: |
+            Simulink
+            Control_System_Toolbox
+            Signal_Processing_Toolbox
+
+      - name: Add paths and run unit tests
+        uses: matlab-actions/run-tests@v2
+        with:
+          source-folder: "configs,controllers,algorithms,analysis"
+          test-results-junit: test-results/results.xml
+          code-coverage-cobertura: coverage/coverage.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matlab-test-results
+          path: test-results/
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matlab-coverage
+          path: coverage/
