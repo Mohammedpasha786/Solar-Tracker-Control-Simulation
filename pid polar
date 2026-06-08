@@ -1,0 +1,51 @@
+% =========================================================
+% pid_polar.m
+% PID Controller Design — Polar (Roll) Axis
+%
+% Compensates for Earth's axial tilt and seasonal variation.
+% Smaller angular range (±30°) allows tighter gains.
+% =========================================================
+
+function [C_pol, info] = pid_polar(cfg)
+
+    if nargin < 1
+        cfg = site_config();
+    end
+
+    fprintf('=== Polar / Roll Axis PID Design ===\n');
+
+    Kv   = cfg.motor.Kv * (2*pi/60);
+    R    = cfg.motor.R_phase;
+    J    = cfg.motor.J * 0.6;   % lighter axis (smaller panel section)
+    B    = cfg.motor.B;
+    Gr   = cfg.gear.ratio * 0.5;  % lower reduction needed (±30° range)
+    eta  = cfg.gear.efficiency;
+
+    Kdc    = Kv * eta / (R * B * Gr);
+    tau_me = J / B;
+    G_pos  = tf(Kdc, [tau_me 1 0]);
+
+    C_pol = pid(cfg.pid.Kp_pol, cfg.pid.Ki_pol, cfg.pid.Kd_pol, ...
+                cfg.ctrl.sample_time / 10, ...
+                cfg.ctrl.sample_time);
+
+    T_cl = feedback(C_pol * G_pos, 1);
+    info = stepinfo(T_cl);
+    [Gm, Pm, ~, ~] = margin(C_pol * G_pos);
+
+    fprintf('Step Response:\n');
+    fprintf('  Rise time    : %.3f s\n', info.RiseTime);
+    fprintf('  Settling     : %.3f s\n', info.SettlingTime);
+    fprintf('  Overshoot    : %.2f %%\n', info.Overshoot);
+    fprintf('  Phase margin : %.2f deg\n', Pm);
+
+    assert(info.Overshoot < 10, 'FAIL: Polar overshoot > 10%%');
+    assert(Pm > 40,             'FAIL: Phase margin < 40 deg');
+    fprintf('All polar axis checks PASSED.\n');
+
+    if ~nargout
+        figure('Name', 'Polar PID Analysis', 'Color', 'white');
+        step(T_cl, 15); title('Polar / Roll Axis Step Response'); grid on;
+    end
+
+end
