@@ -1,0 +1,71 @@
+% =========================================================
+% test_pid_response.m
+% MATLAB Unit Tests — PID Step Response Validation
+% Run with: runtests('tests/test_pid_response')
+% =========================================================
+
+classdef test_pid_response < matlab.unittest.TestCase
+
+    properties
+        cfg
+    end
+
+    methods(TestMethodSetup)
+        function setup(tc)
+            addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'configs'));
+            addpath(fullfile(fileparts(mfilename('fullpath')), '..', 'controllers'));
+            tc.cfg = site_config();
+        end
+    end
+
+    % -------------------------------------------------------
+    methods(Test)
+    % -------------------------------------------------------
+
+        function test_azimuth_overshoot(tc)
+            % Azimuth PID overshoot must be < 15%
+            [~, info] = pid_azimuth(tc.cfg);
+            tc.verifyLessThan(info.Overshoot, 15, ...
+                'Azimuth overshoot exceeds 15%');
+        end
+
+        function test_azimuth_settling_time(tc)
+            % Azimuth PID settling time must be < 10 s
+            [~, info] = pid_azimuth(tc.cfg);
+            tc.verifyLessThan(info.SettlingTime, 10, ...
+                'Azimuth settling time exceeds 10 s');
+        end
+
+        function test_elevation_overshoot(tc)
+            [~, info] = pid_elevation(tc.cfg);
+            tc.verifyLessThan(info.Overshoot, 15, ...
+                'Elevation overshoot exceeds 15%');
+        end
+
+        function test_elevation_settling_time(tc)
+            [~, info] = pid_elevation(tc.cfg);
+            tc.verifyLessThan(info.SettlingTime, 10, ...
+                'Elevation settling time exceeds 10 s');
+        end
+
+        function test_polar_overshoot(tc)
+            [~, info] = pid_polar(tc.cfg);
+            tc.verifyLessThan(info.Overshoot, 10, ...
+                'Polar axis overshoot exceeds 10%');
+        end
+
+        function test_pid_gains_positive(tc)
+            % All PID gains must be positive
+            tc.verifyGreaterThan(tc.cfg.pid.Kp_az, 0, 'Kp_az must be > 0');
+            tc.verifyGreaterThan(tc.cfg.pid.Ki_az, 0, 'Ki_az must be > 0');
+            tc.verifyGreaterThan(tc.cfg.pid.Kd_az, 0, 'Kd_az must be > 0');
+        end
+
+        function test_control_saturation_limits(tc)
+            % Control voltage must be within motor supply
+            tc.verifyLessThanOrEqual(tc.cfg.ctrl.max_voltage, tc.cfg.motor.Vdc, ...
+                'max_voltage exceeds motor supply Vdc');
+        end
+
+    end
+end
