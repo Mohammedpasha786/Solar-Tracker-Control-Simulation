@@ -1,0 +1,121 @@
+% =========================================================
+% lstm_trajectory_pred.m
+% LSTM Neural Network — Sun Trajectory Predictor
+%
+% Trains an LSTM to predict solar azimuth and elevation
+% 5 minutes ahead given recent history. Used as feedforward
+% signal to reduce PID tracking lag.
+%
+% Requires: Deep Learning Toolbox
+% =========================================================
+
+function net = lstm_trajectory_pred(cfg, train_mode)
+
+    if nargin < 1; cfg = site_config(); end
+    if nargin < 2; train_mode = true; end
+
+    %% --- Generate Training Data (365 days × 720 min/day) ---
+    fprintf('Generating SPA training dataset...\n');
+
+    pred_horizon = 5;   % minutes ahead to predict
+    seq_len      = 30;  % minutes of history used as input
+
+    days_train   = 1 : 300;
+    days_val     = 301 : 365;
+
+    [X_train, Y_train] = build_dataset(cfg, days_train, seq_len, pred_horizon);
+    [X_val,   Y_val  ] = build_dataset(cfg, days_val,   seq_len, pred_horizon);
+
+    fprintf('Training samples : %d\n', numel(X_train));
+    fprintf('Validation samples: %d\n', numel(X_val));
+
+    if ~train_mode
+        fprintf('train_mode=false: skipping training, returning empty net.\n');
+        net = [];
+        return;
+    end
+
+    %% --- LSTM Network Architecture ---
+    % Input: [az(t-seq_len+1 : t), el(t-seq_len+1 : t)] — 2 features
+    % Output: [az(t+pred), el(t+pred)] — 2 targets
+    input_size  = 2;
+    hidden_size = 64;
+    output_size = 2;
+
+    layers = [ ...
+        sequenceInputLayer(input_size, 'Name', 'input')
+        lstmLayer(hidden_size, 'OutputMode', 'last', 'Name', 'lstm1')
+        dropoutLayer(0.2, 'Name', 'dropout')
+        fullyConnectedLayer(32, 'Name', 'fc1')
+        reluLayer('Name', 'relu')
+        fullyConnectedLayer(output_size, 'Name', 'fc_out')
+        regressionLayer('Name', 'output')
+    ];
+
+    options = trainingOptions('adam', ...
+        'MaxEpochs',          50, ...
+        'MiniBatchSize',      64, ...
+        'InitialLearnRate',   1e-3, ...
+        'LearnRateSchedule',  'piecewise', ...
+        'LearnRateDropFactor',0.5, ...
+        'LearnRateDropPeriod',20, ...
+        'GradientThreshold',  1, ...
+        'ValidationData',     {X_val, Y_val}, ...
+        'ValidationFrequency',50, ...
+        'Shuffle',            'every-epoch', ...
+        'Verbose',            true, ...
+        'Plots',              'training-progress');
+
+    fprintf('\nTraining LSTM...\n');
+    net = trainNetwork(X_train, Y_train, layers, options);
+
+    %% --- Evaluate on Validation Set ---
+    Y_pred = predict(net, X_val);
+    Y_true = cell2mat(Y_val');
+
+    rmse_az = sqrt(mean((Y_pred(:,1) - Y_true(:,1)).^2));
+    rmse_el = sqrt(mean((Y_pred(:,2) - Y_true(:,2)).^2));
+    fprintf('\nValidation RMSE:\n');
+    fprintf('  Azimuth   : %.4f deg\n', rmse_az);
+    fprintf('  Elevation : %.4f deg\n', rmse_el);
+
+    %% --- Save ---
+    save('lstm_solar_predictor.mat', 'net');
+    fprintf('Model saved to lstm_solar_predictor.mat\n');
+
+end
+
+% =========================================================
+% build_dataset — helper
+% =========================================================
+function [X_cell, Y_cell] = build_dataset(cfg, days, seq_len, horizon)
+
+    X_cell = {};
+    Y_cell = {};
+
+    for d = days
+        az_day = zeros(720, 1);
+        el_day = zeros(720, 1);
+
+        for m = 1 : 720
+            h  = floor((m + 5*60 - 1) / 60);   % start at 5 AM
+            mn = mod(m + 5*60 - 1, 60);
+            [az, el, ~] = solar_position_spa(cfg.latitude, cfg.longitude, ...
+                cfg.year, 1, d, h, mn, 0, cfg.timezone);
+            az_day(m) = az;
+            el_day(m) = max(0, el);
+        end
+
+        % Normalise to [0 1]
+        az_n = az_day / 360;
+        el_n = el_day / 90;
+
+        for i = seq_len : (720 - horizon)
+            seq_x = [az_n(i-seq_len+1:i), el_n(i-seq_len+1:i)]';   % 2 x seq_len
+            seq_y = [az_n(i+horizon); el_n(i+horizon)];             % 2 x 1
+            X_cell{end+1} = seq_x;  %#ok<AGROW>
+            Y_cell{end+1} = seq_y;  %#ok<AGROW>
+        end
+    end
+
+end
