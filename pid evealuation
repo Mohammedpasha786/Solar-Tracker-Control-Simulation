@@ -1,0 +1,75 @@
+% =========================================================
+% pid_elevation.m
+% PID Controller Design — Elevation (Altitude) Axis
+%
+% Controls vertical tilt (0–90°) of the solar panel.
+% Key difference from azimuth: gravity load torque must be
+% compensated. Uses a gravity feedforward term.
+% =========================================================
+
+function [C_el, info] = pid_elevation(cfg)
+
+    if nargin < 1
+        cfg = site_config();
+    end
+
+    fprintf('=== Elevation Axis PID Design ===\n');
+
+    %% --- Plant Model (same motor + gear as azimuth) ---
+    Kv   = cfg.motor.Kv * (2*pi/60);
+    R    = cfg.motor.R_phase;
+    J    = cfg.motor.J;
+    B    = cfg.motor.B;
+    Gr   = cfg.gear.ratio;
+    eta  = cfg.gear.efficiency;
+
+    % Gravity load: assume panel mass = 15 kg, CG offset = 0.3 m
+    m_panel  = 15;
+    r_cg     = 0.3;
+    g        = 9.81;
+
+    % Gravity torque at midrange elevation (45°): Tg = m*g*r*cos(el)
+    % This appears as a disturbance; add feedforward Vff = Tg/(Kv*eta/R*Gr)
+    Tg_max   = m_panel * g * r_cg;   % max gravity torque at 0°
+    Kdc      = Kv * eta / (R * B * Gr);
+
+    % Effective plant (2nd-order position, same as azimuth)
+    tau_me   = J / B;
+    G_pos    = tf(Kdc, [tau_me 1 0]);
+
+    %% --- PID Tuning with higher integral gain (to overcome gravity steady-state) ---
+    opts = pidtuneOptions('PhaseMargin', 45, 'DesignFocus', 'reference-tracking');
+    [~]  = pidtune(G_pos, 'PID', 1/cfg.ctrl.sample_time, opts);
+
+    C_el = pid(cfg.pid.Kp_el, cfg.pid.Ki_el, cfg.pid.Kd_el, ...
+               cfg.ctrl.sample_time / 10, ...
+               cfg.ctrl.sample_time);
+
+    %% --- Gravity Feedforward Gain ---
+    % Vff(el) = Tg_max * cos(el) / (Kv * eta * Gr / R)
+    cfg.ctrl.Vff_el_gain = Tg_max * R / (Kv * eta * Gr);
+    fprintf('Gravity feedforward gain: %.4f V/cos(el)\n', cfg.ctrl.Vff_el_gain);
+
+    %% --- Closed-Loop Analysis ---
+    T_cl = feedback(C_el * G_pos, 1);
+    info = stepinfo(T_cl);
+    [Gm, Pm, ~, ~] = margin(C_el * G_pos);
+
+    fprintf('Step Response:\n');
+    fprintf('  Rise time    : %.3f s\n', info.RiseTime);
+    fprintf('  Settling     : %.3f s\n', info.SettlingTime);
+    fprintf('  Overshoot    : %.2f %%\n', info.Overshoot);
+    fprintf('  Phase margin : %.2f deg\n', Pm);
+
+    assert(info.Overshoot < 15, 'FAIL: Elevation overshoot > 15%%');
+    assert(Pm > 30,             'FAIL: Phase margin < 30 deg');
+    fprintf('All elevation checks PASSED.\n');
+
+    if ~nargout
+        figure('Name', 'Elevation PID Analysis', 'Color', 'white');
+        subplot(1,2,1); step(T_cl, 20); title('Elevation Step Response'); grid on;
+        subplot(1,2,2); bode(C_el * G_pos); title('Open-Loop Bode'); grid on;
+        sgtitle('Elevation Axis PID');
+    end
+
+end
