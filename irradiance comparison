@@ -1,0 +1,82 @@
+% =========================================================
+% irradiance_comparison.m
+% Plots daily irradiance and power output for all four
+% tracker configurations on the summer solstice.
+% Run standalone: irradiance_comparison()
+% =========================================================
+
+function irradiance_comparison(cfg)
+
+    if nargin < 1; cfg = site_config(); end
+
+    dt_min   = 5;
+    hours    = 5 : dt_min/60 : 19;
+    N        = length(hours);
+
+    P_fixed  = zeros(N,1);
+    P_single = zeros(N,1);
+    P_dual   = zeros(N,1);
+
+    doy = 172;   % ~June 21
+    [mo, dy] = deal(6, 21);
+
+    for i = 1:N
+        h_frac = hours(i);
+        h  = floor(h_frac);
+        mn = round((h_frac - h) * 60);
+
+        [az, el, zen] = solar_position_spa(cfg.latitude, cfg.longitude, ...
+            cfg.year, mo, dy, h, mn, 0, cfg.timezone);
+
+        if el <= 0; continue; end
+
+        G = clear_sky_irr(zen, doy);
+
+        % Fixed: optimal tilt = latitude
+        aoi_f  = aoi_fixed(el, az, cfg.latitude, 180);
+        P_fixed(i)  = G * max(0, cosd(aoi_f))  * cfg.panel.area * cfg.panel.efficiency;
+
+        % Single-axis (azimuth only)
+        aoi_s  = 90 - el;
+        P_single(i) = G * max(0, cosd(aoi_s)) * cfg.panel.area * cfg.panel.efficiency;
+
+        % Dual-axis (perfect tracking)
+        P_dual(i) = G * cfg.panel.area * cfg.panel.efficiency;
+    end
+
+    %% --- Plot ---
+    figure('Name', 'Daily Irradiance Comparison', 'Color', 'white', 'Position', [100 100 900 500]);
+
+    plot(hours, P_fixed,  'k-',  'LineWidth', 1.5, 'DisplayName', 'Fixed Tilt'); hold on;
+    plot(hours, P_single, 'b--', 'LineWidth', 1.5, 'DisplayName', 'Single-Axis (Azimuth)');
+    plot(hours, P_dual,   'r-',  'LineWidth', 2.0, 'DisplayName', 'Dual-Axis (Perfect)');
+
+    xlabel('Local Time (hours)'); ylabel('Power Output (W)');
+    title(sprintf('Daily Power Output — Warangal, India — %d-%02d-%02d', cfg.year, mo, dy));
+    legend('Location', 'northwest'); grid on;
+    xlim([5 19]); xticks(5:1:19);
+    xticklabels(arrayfun(@(h) sprintf('%02d:00', h), 5:19, 'UniformOutput', false));
+
+    %% --- Energy totals (area under curve, kWh) ---
+    E_fixed  = trapz(hours, P_fixed)  / 1000;
+    E_single = trapz(hours, P_single) / 1000;
+    E_dual   = trapz(hours, P_dual)   / 1000;
+
+    fprintf('\nDaily Energy (clear-sky, June 21):\n');
+    fprintf('  Fixed tilt    : %.3f kWh\n', E_fixed);
+    fprintf('  Single-axis   : %.3f kWh  (+%.1f%%)\n', E_single, 100*(E_single/E_fixed - 1));
+    fprintf('  Dual-axis     : %.3f kWh  (+%.1f%%)\n', E_dual,   100*(E_dual/E_fixed   - 1));
+
+end
+
+function G = clear_sky_irr(zen, doy)
+    tau_b = 0.56;
+    G_on  = 1367 * (1 + 0.033 * cosd(360 * doy / 365));
+    if zen >= 90; G = 0; return; end
+    G = max(0, G_on * tau_b^(1/cosd(zen)));
+end
+
+function aoi = aoi_fixed(el, az, tilt, panel_az)
+    cos_aoi = cosd(el)*cosd(az-panel_az)*sind(tilt) + sind(el)*cosd(tilt);
+    aoi = rad2deg(acos(max(0, min(1, cos_aoi))));
+end
