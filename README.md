@@ -1,1 +1,105 @@
 # Solar-Tracker-Control-Simulation
+[![MATLAB CI](https://github.com/YOUR_USERNAME/solar-tracker-control-sim/actions/workflows/matlab_ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/solar-tracker-control-sim/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![MATLAB](https://img.shields.io/badge/MATLAB-R2024a-orange.svg)](https://www.mathworks.com/)
+
+A simulation-based multi-axis solar tracker control system built with MATLAB/Simulink, Simscape Multibody, and Simscape Electrical. Implements PID controllers for Azimuth, Elevation, and Polar axes driven by a BLDC motor model, guided by the NREL Solar Position Algorithm (SPA).
+
+
+## Requirements
+
+| Toolbox | Purpose |
+|---|---|
+| MATLAB R2024a | Base environment |
+| Simulink | Block diagram modeling |
+| Simscape | Physical modeling foundation |
+| Simscape Multibody | Worm gear, joint, rigid body |
+| Simscape Electrical | BLDC motor, encoder |
+| Control System Toolbox | PID tuning, Bode/root locus |
+| Deep Learning Toolbox | LSTM trajectory prediction (optional) |
+
+##  Getting Started
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/YOUR_USERNAME/solar-tracker-control-sim.git
+cd solar-tracker-control-sim
+```
+
+### 2. Configure Site Parameters
+Edit `configs/site_config.m`:
+```matlab
+cfg.latitude  = 18.0;   % Warangal, Telangana, India
+cfg.longitude = 79.6;
+cfg.timezone  = 5.5;    % IST = UTC+5:30
+```
+
+### 3. Verify SPA Output
+```matlab
+run('algorithms/solar_position_spa.m')
+```
+
+### 4. Open the Main Model
+```matlab
+open('models/solar_tracker_main.slx')
+sim('solar_tracker_main')
+```
+
+### 5. Run Efficiency Analysis
+```matlab
+run('analysis/efficiency_analysis.m')
+```
+
+## Control Architecture
+
+┌─────────────────────────────────────────┐
+│         NREL SPA + Optimal Angle         │  ← lat/lon/UTC
+└───────────────────┬─────────────────────┘
+                    │ setpoints (az, el, roll)
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+   PID Azimuth  PID Elevation  PID Polar
+        │           │           │
+        └───────────┴───────────┘
+                    │ control signals
+        ┌───────────┼───────────┐
+        ▼           ▼           ▼
+     Motor Az    Motor El    Motor Pol
+        │           │           │
+   ┌────┴───────────┴───────────┴────┐
+   │     Worm Gear + Panel Frame      │  ← Simscape Multibody
+   └──────────────────────────────────┘
+                    │ encoder positions
+                    └──► feedback to PIDs
+
+## Results Summary
+
+| Configuration | Annual Energy Gain vs Fixed |
+|---|---|
+| Fixed mount (reference) | 0% |
+| Single-axis azimuth tracker | +25–30% |
+| Dual-axis (az + el) tracker | +35–45% |
+| Triple-axis (az + el + polar) | +40–48% |
+
+## Advanced Features
+
+- **LSTM Predictor** (`algorithms/lstm_trajectory_pred.m`): Trains on historical SPA angle data to predict sun position 5 minutes ahead. Used as feedforward signal to reduce PID tracking lag.
+- **Fault Detection**: Encoder stall detection (zero velocity + nonzero error > 3 s → fault flag + safe-position command).
+- **Energy Storage Integration**: Battery block from Simscape Electrical simulates round-trip efficiency with tracker power overhead.
+
+
+## References
+
+1. [NREL Solar Position Algorithm (SPA)](https://midcdmz.nrel.gov/spa/)
+2. [NOAA Solar Position Calculator](https://gml.noaa.gov/grad/solcalc/)
+3. Reda, I. & Andreas, A. (2004). *Solar Position Algorithm for Solar Radiation Applications*. NREL/TP-560-34302.
+4. MathWorks – [Using the Worm and Gear Constraint Block – Solar Tracker](https://www.mathworks.com/help/sm/ug/solar-tracker.html)
+5. Jha et al. (2020). *Sun's Position Tracking by Solar Angles Using MATLAB*. ICRESG 2020.
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+##  Author
+
+Afreed,ashraf  
