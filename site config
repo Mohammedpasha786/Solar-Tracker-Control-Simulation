@@ -1,0 +1,60 @@
+% site_config.m
+% Site location, motor, and simulation configuration
+% Solar Tracker Control Simulation
+% SR University — ECE Dept.
+function cfg = site_config()
+
+%% --- Geographic Location ---
+cfg.latitude    = 18.0;     % degrees N  (Warangal, Telangana, India)
+cfg.longitude   = 79.6;     % degrees E
+cfg.altitude    = 302;      % meters above sea level
+cfg.timezone    = 5.5;      % UTC offset in hours (IST = UTC+5:30)
+
+%% --- Simulation Date/Time ---
+cfg.year        = 2024;
+cfg.month       = 6;
+cfg.day         = 21;       % Summer solstice — maximum solar elevation
+cfg.hour        = 6;        % Start hour (local time)
+cfg.sim_duration_hrs = 12;  % Simulate 6 AM to 6 PM
+
+%% --- PID Tuning Limits ---
+% These are initial tuning bounds for pidtune(); refine after simulation
+cfg.pid.Kp_az   = 2.0;   cfg.pid.Ki_az = 0.5;  cfg.pid.Kd_az = 0.3;
+cfg.pid.Kp_el   = 1.8;   cfg.pid.Ki_el = 0.4;  cfg.pid.Kd_el = 0.25;
+cfg.pid.Kp_pol  = 1.2;   cfg.pid.Ki_pol= 0.3;  cfg.pid.Kd_pol= 0.2;
+
+%% --- BLDC Motor Parameters ---
+cfg.motor.Vdc       = 24;       % Supply voltage (V)
+cfg.motor.Kv        = 300;      % Motor velocity constant (RPM/V)
+cfg.motor.R_phase   = 0.5;      % Phase resistance (Ohm)
+cfg.motor.L_phase   = 0.5e-3;   % Phase inductance (H)
+cfg.motor.pole_pairs= 4;        % Number of pole pairs
+cfg.motor.J         = 1e-4;     % Rotor inertia (kg.m^2)
+cfg.motor.B         = 1e-5;     % Viscous friction (N.m.s/rad)
+
+%% --- Worm Gear Parameters ---
+cfg.gear.ratio      = 40;       % Worm gear reduction ratio
+cfg.gear.efficiency = 0.85;     % Mechanical efficiency
+
+%% --- Control System ---
+cfg.ctrl.sample_time    = 0.1;  % Controller sample time (s)
+cfg.ctrl.max_voltage    = 24;   % Saturation limit (V)
+cfg.ctrl.antiwindup_lim = 50;   % Integrator anti-windup limit
+
+%% --- Axis Travel Limits ---
+cfg.limits.az_min  = 0;     cfg.limits.az_max  = 360;   % degrees
+cfg.limits.el_min  = 0;     cfg.limits.el_max  = 90;    % degrees
+cfg.limits.pol_min = -30;   cfg.limits.pol_max = 30;    % degrees
+
+%% --- PV Panel ---
+cfg.panel.area       = 1.96;    % m^2 (standard 400W panel)
+cfg.panel.efficiency = 0.20;    % 20% panel efficiency
+cfg.panel.Pmax       = 400;     % Wp
+
+%% --- Fault Detection ---
+cfg.fault.stall_time    = 3.0;  % s — time at zero velocity before fault
+cfg.fault.stall_err_thr = 2.0;  % deg — minimum error to flag as stall
+cfg.fault.safe_az       = 180;  % deg — safe park position (azimuth)
+cfg.fault.safe_el       = 30;   % deg — safe park position (elevation)
+
+end
