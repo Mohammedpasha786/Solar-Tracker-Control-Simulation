@@ -1,0 +1,32 @@
+# MATLAB
+*.asv
+*.m~
+*.mlx~
+*.mex*
+*.slxc
+*.autosave
+slprj/
+codegen/
+work/
+
+# Simulink cache & compiled
+*.slx.r*
+*.slx.lock
+*.mdl.lock
+
+# Trained ML model
+lstm_solar_predictor.mat
+
+# Test output
+test-results/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
