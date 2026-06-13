@@ -1,8 +1,4 @@
 # Solar-Tracker-Control-Simulation
-[![MATLAB CI](https://github.com/YOUR_USERNAME/solar-tracker-control-sim/actions/workflows/matlab_ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/solar-tracker-control-sim/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![MATLAB](https://img.shields.io/badge/MATLAB-R2024a-orange.svg)](https://www.mathworks.com/)
-
 A simulation-based multi-axis solar tracker control system built with MATLAB/Simulink, Simscape Multibody, and Simscape Electrical. Implements PID controllers for Azimuth, Elevation, and Polar axes driven by a BLDC motor model, guided by the NREL Solar Position Algorithm (SPA).
 
 
